@@ -1,0 +1,19 @@
+{
+  "name": "unihashjs-cli",
+  "version": "1.0.0",
+  "description": "unihash cli js implementation",
+  "repository": "https://github.com/jaylim/unihashjs-cli.git",
+  "bin": {
+    "unihashjs-cli": "./bin/unihashjs-cli"
+  },
+  "scripts": {
+  },
+  "author": "Jay <jay@pentajeu.com>",
+  "license": "ISC",
+  "dependencies": {
+    "commander": "^2.15.1",
+    "lodash": "^4.17.10",
+    "request": "^2.87.0",
+    "ulitecore-lib": "^0.13.23"
+  }
+}

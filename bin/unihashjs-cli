@@ -1,0 +1,157 @@
+#!/usr/bin/env node
+
+// require("request").debug = true;
+
+const _       = require("lodash");
+const fs      = require("fs");
+const prog    = require("commander");
+const crypto  = require("crypto");
+const Lib     = require("ulitecore-lib");
+const Utils   = require("../utils");
+const request = require("request").defaults({ json : true });
+const BN      = Lib.crypto.BN;
+const Unit    = Lib.Unit;
+const Script  = Lib.Script;
+const Address       = Lib.Address;
+const PrivateKey    = Lib.PrivateKey;
+const Transaction   = Lib.Transaction;
+const UnspentOutput = Transaction.UnspentOutput;
+
+prog
+.option("--endpoint <endpoint>", "API endpoint")
+.version("0.1.0");
+
+
+prog
+.command("rawtx <unspentFile> <pkeyFile> <toAddrFile> <changeAddr>")
+.option("-b, --broadcast", "Broadcast raw transaction")
+.action(async (unspentFile, pkeyFile, toAddrFile, changeAddr, opts) => {
+	let [utxo, keys, addrs] = await Promise.all([
+		readJsonFile(unspentFile),
+		readJsonFile(pkeyFile),
+		readJsonFile(toAddrFile)
+	]);
+
+	keys = processPrivateKey(keys);
+	utxo = processUnspentTxOutput(utxo);
+
+	let tran = createTransaction(utxo, addrs, changeAddr).sign(keys);
+	let hex  = tran.serialize(true);
+	console.log("txId:", Utils.computeTxId(hex).toString("hex"));
+	console.log("rawTx:", hex);
+
+	if (opts.broadcast) {
+		let resp = await broadcastTx(hex);
+		console.log(resp);
+	}
+});
+
+
+prog
+.command("balance <unspentFile>")
+.action(async unspentFile => {
+	let utxo = await readJsonFile(unspentFile);
+	let bal  = new BN(0);
+
+	_.each(utxo, tx => {
+		let amt = new BN([tx.satoshis].join(""));
+		bal = bal.add(amt);
+	});
+	console.log(Unit.fromSatoshis(bal.toNumber()).toBTC());
+});
+
+
+prog
+.command("utxo <addrs>")
+.action(async addrs => {
+	let utxo = await unspentTxOutput(addrs);
+	console.log(JSON.stringify(utxo));
+});
+
+
+prog
+.command("*")
+.action(() => {
+	prog.help();
+});
+
+prog.parse(process.argv);
+
+if (!process.argv.slice(2).length) {
+	prog.help();
+}
+
+function createTransaction(utxo, addrs, cAddr) {
+	let tran = new Transaction();
+	tran.from(utxo);
+	tran.change(cAddr);
+	_.each(addrs, (amt, addr) => tran.to(addr, amt));
+	tran.fee(0);
+	return tran;
+}
+
+function processPrivateKey(keys) {
+	return _.map(keys, key => PrivateKey.fromWIF(key));
+}
+
+function processUnspentTxOutput(list) {
+	return _.map(list, l => new UnspentOutput(l));
+}
+
+function readJsonFile(file) {
+	return new Promise((success, reject) => {
+		fs.readFile(file, (err, data) => {
+			if (err) {
+				return reject(err);
+			}
+			success(JSON.parse(data.toString()));
+		});
+	});
+}
+
+function unspentTxOutput(addrs) {
+	let url = [prog.endpoint, 'addrs', 'utxo'].join('/');
+	let opt = {
+		body: {
+			addrs: addrs
+		}
+	}
+
+	return new Promise((success, reject) => {
+		request.post(url, opt, (e, resp, data) => {
+			if (e) {
+				return reject(e);
+			}
+			if (resp.statusCode != 200) {
+				return success([]);
+			}
+
+			let utxo = [];
+			_.each(data, d => {
+				if (d.amount > 0) {
+					utxo.push(d);
+				}
+			});
+
+			success(utxo);
+		});
+	});
+}
+
+function broadcastTx(hex) {
+	let url = [prog.endpoint, 'tx', 'send'].join('/');
+	let opt = {
+		body: {
+			rawtx: hex
+		}
+	}
+
+	return new Promise((success, reject) => {
+		request.post(url, opt, (e, resp, data) => {
+			if (e) {
+				return reject(e);
+			}
+			return success(data);
+		});
+	});
+}
